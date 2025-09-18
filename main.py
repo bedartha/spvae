@@ -40,9 +40,10 @@ def get_z500():
 if __name__ == "__main__":
     out = eval(f"{sys.argv[1]}()")
     z500_clim = out.mean(dim="time")
+    print("plot climatology ...")
     import cartopy.crs as ccrs
     import matplotlib.pyplot as plt
-    subplot_kws=dict(projection=ccrs.PlateCarree(),
+    subplot_kws=dict(projection=ccrs.Robinson(),
                  facecolor='grey')
     plt.figure(figsize=[12,8])
     z500_clim.plot(x='longitude', y='latitude',
