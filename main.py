@@ -47,7 +47,7 @@ if __name__ == "__main__":
     print("plot climatology ...")
     subplot_kws=dict(projection=ccrs.Robinson(),
                      facecolor='grey')
-    plt.figure(figsize=[4,8])
+    plt.figure(figsize=[8,4])
     z500_clim.plot(x='longitude', y='latitude',
                   subplot_kws=subplot_kws,
                   #transform=ccrs.Robinson()
