@@ -10,6 +10,8 @@ import os
 import xarray as xr
 from pprint import pprint
 
+import cartopy.crs as ccrs
+import matplotlib.pyplot as plt
 
 def get_dataset():
     """Returns the dataset as an xarray Dataset object."""
@@ -38,18 +40,17 @@ def get_z500():
 
 
 if __name__ == "__main__":
+    print("get z500 ...")
     out = eval(f"{sys.argv[1]}()")
+    print("get climatology ...")
     z500_clim = out.mean(dim="time")
     print("plot climatology ...")
-    import cartopy.crs as ccrs
-    import matplotlib.pyplot as plt
     subplot_kws=dict(projection=ccrs.Robinson(),
-                 facecolor='grey')
-    plt.figure(figsize=[12,8])
+                     facecolor='grey')
+    plt.figure(figsize=[4,8])
     z500_clim.plot(x='longitude', y='latitude',
-                  #vmin=-2, vmax=32,
-                  #cmap=cmocean.cm.thermal,
                   subplot_kws=subplot_kws,
-                  transform=ccrs.Robinson())
+                  #transform=ccrs.Robinson()
+                  )
     plt.savefig("./z500_clim.png")
     print("z500 climatology plot saved to disk")
