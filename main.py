@@ -13,6 +13,10 @@ from pprint import pprint
 import cartopy.crs as ccrs
 import matplotlib.pyplot as plt
 
+from torch.utils.data import DataLoader
+from dataset import WeatherBenchDataset
+
+
 def get_dataset():
     """Returns the dataset as an xarray Dataset object."""
     PATH_TO_DATA = f"{HOMEDIR}{DATADIR}{ARRNAME}"
@@ -32,25 +36,47 @@ def data_info():
 
 def get_z500():
     """Extracts Z500 from the ZARR dataset and saves to disk if reqd."""
+    print("get z500 ...")
     ds = get_dataset()
     z = ds["geopotential"]
-    z500 = z.sel(level=500)#.copy()
-    ds.close()
+    z500 = z.sel(level=500)
+    # ds.close()
+    OUTPATH = "~/public/datasets/for_model_development/weatherbench2/era5/"
+    OUTFILE = f"{OUTPATH}{ARRNAME[:-5]}_Z500.zarr"
+    print("saving Z500 to disk as zarr file ...")
+    # print(OUTFILE)
+    z500.to_zarr(OUTFILE, mode="w", zarr_format=2, consolidated=True)
+    print("saved to: %s" % OUTFILE)
     return z500
 
 
+def get_zlevs():
+    """Extracts Z500 from the ZARR dataset and saves to disk if reqd."""
+    print("get zlevs ...")
+    ds = get_dataset()
+    z = ds["geopotential"]
+    zlevs = z.sel(level=[250,500,850])
+    # ds.close()
+    OUTPATH = "~/public/datasets/for_model_development/weatherbench2/era5/"
+    OUTFILE = f"{OUTPATH}{ARRNAME[:-5]}_ZLEVS.zarr"
+    print("saving ZLEVS to disk as zarr file ...")
+    # print(OUTFILE)
+    zlevs.to_zarr(OUTFILE, mode="w", zarr_format=2, consolidated=True)
+    print("saved to: %s" % OUTFILE)
+    return zlevs
+
+
 if __name__ == "__main__":
-    print("get z500 ...")
-    out = eval(f"{sys.argv[1]}()")
-    print("get climatology ...")
-    z500_clim = out.mean(dim="time")
-    print("plot climatology ...")
-    subplot_kws=dict(projection=ccrs.Robinson(),
-                     facecolor='grey')
-    plt.figure(figsize=[8,4])
-    z500_clim.plot(x='longitude', y='latitude',
-                  subplot_kws=subplot_kws,
-                  #transform=ccrs.Robinson()
-                  )
-    plt.savefig("./z500_clim.png")
-    print("z500 climatology plot saved to disk")
+    # test out the weatherbench dataset class
+    OUTPATH = "~/public/datasets/for_model_development/weatherbench2/era5/"
+    OUTFILE = f"{OUTPATH}{ARRNAME[:-5]}_ZLEVS.zarr"
+    wbds = WeatherBenchDataset(path_to_zarr=OUTFILE, to_tensor=True)
+
+    # test out num_workers speed up
+    dataloader = DataLoader(wbds, batch_size=5, shuffle=True, num_workers=10)
+    for i_batch, sample_batched in enumerate(dataloader):
+        print(i_batch, sample_batched.shape)
+        if i_batch == 100:
+            break
+    # out = eval(f"{sys.argv[1]}()")
+
