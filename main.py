@@ -15,7 +15,9 @@ import cartopy.crs as ccrs
 import matplotlib.pyplot as plt
 
 from torch.utils.data import DataLoader
+
 from dataset import WeatherBenchDataset
+from model import PatchEmbedding
 
 
 def get_dataset():
@@ -101,11 +103,43 @@ if __name__ == "__main__":
     wbds = WeatherBenchDataset(path_to_zarr=OUTFILE, to_tensor=True)
 
     # test out num_workers speed up
-    print("using torch DataLoader to sample mini-batches ...")
-    dataloader = DataLoader(wbds, batch_size=5, shuffle=True, num_workers=13)
-    for i_batch, sample_batched in enumerate(dataloader):
-        print(i_batch, sample_batched.shape)
-        if i_batch == 99:
-            break
+    test_dataloader = False
+    if test_dataloader:
+        print("using torch DataLoader to sample mini-batches ...")
+        dataloader = DataLoader(wbds, batch_size=5, shuffle=True, num_workers=13)
+        for i_batch, sample_batched in enumerate(dataloader):
+            print(i_batch, sample_batched.shape)
+            if i_batch == 99:
+                break
+
+    # test out the patch embedding
+    test_patch_embedding = True
+    look_inside_conv2d_weights = False
+    if test_patch_embedding:
+        print("get sample of batch size 1 ...")
+        dataloader = DataLoader(wbds, batch_size=1, shuffle=True, num_workers=0)
+        sample = next(iter(dataloader))
+        W, H = sample.shape[2], sample.shape[3]
+        w, h = 4, 2
+        num_patches = int((W / w) * (H / h))
+        print("testing out patch embedding ...")
+        embeddings = PatchEmbedding(
+                embed_dim=10,
+                patch_size=(w, h),
+                num_patches=num_patches,
+                dropout=0.1, in_channels=4
+                )
+        if look_inside_conv2d_weights:
+            children = embeddings.patcher.children()
+            obj = []
+            for child in children:
+                obj.append(child)
+            conv2d = obj[0]
+            print(conv2d.weight.shape)
+        print(sample.shape)
+        x = embeddings(sample)
+        print(x.shape)
+
+
     # out = eval(f"{sys.argv[1]}()")
 
