@@ -17,7 +17,8 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
 from dataset import WeatherBenchDataset
-from model import PatchEmbedding
+from model import PatchEmbedding, StackedPerceiver, VariationalAutoencoder
+from model import PatchDecoder
 
 
 def get_dataset():
@@ -114,21 +115,27 @@ if __name__ == "__main__":
                 break
 
     # test out the patch embedding
+    batch_size = 1
     test_patch_embedding = True
     look_inside_conv2d_weights = False
+    embed_dim = 10
     if test_patch_embedding:
-        print("get sample of batch size 1 ...")
-        dataloader = DataLoader(wbds, batch_size=1, shuffle=True, num_workers=0)
+        print(f"get sample of batch size {batch_size} ...")
+        dataloader = DataLoader(wbds,
+                                batch_size=batch_size,
+                                shuffle=True,
+                                num_workers=0)
         sample = next(iter(dataloader))
         W, H = sample.shape[2], sample.shape[3]
         w, h = 4, 2
         num_patches = int((W / w) * (H / h))
         print("testing out patch embedding ...")
         embeddings = PatchEmbedding(
-                embed_dim=10,
+                embed_dim=embed_dim,
                 patch_size=(w, h),
                 num_patches=num_patches,
-                dropout=0.1, in_channels=4
+                dropout=0.1, in_channels=4,
+                keep_channels=False
                 )
         if look_inside_conv2d_weights:
             children = embeddings.patcher.children()
@@ -139,8 +146,54 @@ if __name__ == "__main__":
             print(conv2d.weight.shape)
         print(sample.shape)
         x = embeddings(sample)
+
+    # test out the perceiver block
+    test_perceiver = False
+    latent_dim = 512
+    latent2_dim = 256
+    mlp_dim = 64
+    mlp2_dim = 64
+    n_heads = 1
+    n_layers = 5
+    if test_perceiver:
+        print("testing Perceiver IO block ...")
+        stacked_prcvr = StackedPerceiver(
+                                embed_dim=embed_dim,
+                                latent_dims=[128, 64],
+                                mlp_dims=[64, 32],
+                                n_heads=[5, 5],
+                                n_trnfr_layers=[7, 7],
+                                dropouts=[0.1, 0.1],
+                                batch_size=batch_size
+                                )
+        out = stacked_prcvr(x)
+
+    # test out the vae
+    vae_latent_dim = 128
+    test_vae = True
+    if test_vae:
+        print("testing out the VAE ...")
         print(x.shape)
+        vae = VariationalAutoencoder(
+                vae_latent_dim=vae_latent_dim,
+                sp_enc_latent_dims=[512, 256],
+                sp_dec_latent_dims=[256, 512, 1024],
+                sp_embed_dim=embed_dim,
+                sp_mlp_dims=[64, 64],
+                sp_n_heads=[5, 5],
+                sp_n_trnfr_layers=[7, 7],
+                sp_dropouts=[0.1, 0.1],
+                batch_size=batch_size
+                )
+        x_ = vae(x)
 
-
-    # out = eval(f"{sys.argv[1]}()")
-
+    # test out the patch decoder
+    test_patch_decoder = True
+    if test_patch_decoder:
+        print("test patch decoder ...")
+        patch_dec = PatchDecoder(embed_dim=embed_dim,
+                                 data_channels=4,
+                                 num_patches=256,
+                                 patch_size=(4,2),
+                                 input_size=(W, H))
+        out = patch_dec(x_)
