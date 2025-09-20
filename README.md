@@ -2,7 +2,7 @@
 Stacked Perceiver Variational Autoencoder
 
 ## TO DO
-- [ ] Dataset class
-- [ ] Patch embedding
-- [ ] Encoder-Decoder
+- [x] Dataset class
+- [x] Patch embedding
+- [x] Encoder-Decoder
 - [ ] Train
