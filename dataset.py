@@ -5,6 +5,7 @@ Defines stuff needed to design the custom Dataset class for WeatherBench2
 """
 
 
+import numpy as np
 import xarray as xr
 import torch
 from torch.utils.data import Dataset
@@ -25,7 +26,13 @@ class WeatherBenchDataset(Dataset):
         """
         self.path = path_to_zarr
         self.to_tensor = to_tensor
-        self.ds = xr.open_zarr(path_to_zarr, chunks=None)
+        ds = xr.open_zarr(
+                path_to_zarr,
+                chunks={},
+                )
+
+        ds.chunk(chunks={"time": 50, "lat": 32, "lon": 64})
+        self.ds = ds
 
 
     def __str__(self):
@@ -46,9 +53,10 @@ class WeatherBenchDataset(Dataset):
              sample = wbds[[3,100,50]]
         """
         time = self.ds.time
-        sample = self.ds.sel(time=time[idx])
+        sample = self.ds.sel(time=time[idx]).to_array()
+        # here the sample is a dask array because we use chunking
         if self.to_tensor:
-            sample = torch.from_numpy(sample.to_array().to_numpy())
+            sample = torch.tensor(sample.data.compute())
         return sample
 
 

@@ -8,6 +8,7 @@ ARRNAME = "1959-2023_01_10-6h-64x32_equiangular_conservative.zarr"
 import sys
 import os
 import xarray as xr
+import numpy as np
 from pprint import pprint
 
 import cartopy.crs as ccrs
@@ -50,33 +51,61 @@ def get_z500():
     return z500
 
 
-def get_zlevs():
+def get_zlevs_t2m():
     """Extracts Z500 from the ZARR dataset and saves to disk if reqd."""
     print("get zlevs ...")
-    ds = get_dataset()
-    z = ds["geopotential"]
-    zlevs = z.sel(level=[250,500,850])
-    # ds.close()
+    extract_vars = ["2m_temperature", "geopotential"]
+    levs = [250, 500, 850]
+    ds = get_dataset()[extract_vars]
+    ds = ds.sel(level=levs)
+    print("convert xarray Dataset to xarray DataArray ...")
+    t2m = ds["2m_temperature"]
+    gpo = ds["geopotential"]
+    print("create xarray dataset with extracted arrays ...")
+    dsout = xr.Dataset(
+            data_vars=dict(
+                t2m=(["time", "lon", "lat"], t2m.data),
+                z250=(["time", "lon", "lat"], gpo.sel(level=250).data),
+                z500=(["time", "lon", "lat"], gpo.sel(level=500).data),
+                z850=(["time", "lon", "lat"], gpo.sel(level=850).data),
+                ),
+            coords=dict(
+                time=("time", ds.time.data),
+                lon=("lon", ds.longitude.data),
+                lat=("lat", ds.latitude.data),
+                ),
+            attrs=dict(
+                desription="Data extracted from the original WB2 Zarr file"
+                )
+            )
+    ds.close()
+    print("saving ZLEVS and T2M to disk as ZARR archive ...")
     OUTPATH = "~/public/datasets/for_model_development/weatherbench2/era5/"
-    OUTFILE = f"{OUTPATH}{ARRNAME[:-5]}_ZLEVS.zarr"
-    print("saving ZLEVS to disk as zarr file ...")
-    # print(OUTFILE)
-    zlevs.to_zarr(OUTFILE, mode="w", zarr_format=2, consolidated=True)
+    OUTFILE = f"{OUTPATH}{ARRNAME[:-5]}_ZLEVS_T2M.zarr"
+    dsout.to_zarr(OUTFILE, mode="w", zarr_format=2, consolidated=True)
     print("saved to: %s" % OUTFILE)
-    return zlevs
+    return dsout
 
 
 if __name__ == "__main__":
+    # data_info()
+    # sys.exit()
+    # extract three geopotential levels and t2m
+    # get_zlevs_t2m()
+    # sys.exit()
+
     # test out the weatherbench dataset class
+    print("initializing WeatherBenchDataset class ...")
     OUTPATH = "~/public/datasets/for_model_development/weatherbench2/era5/"
-    OUTFILE = f"{OUTPATH}{ARRNAME[:-5]}_ZLEVS.zarr"
+    OUTFILE = f"{OUTPATH}{ARRNAME[:-5]}_ZLEVS_T2M.zarr"
     wbds = WeatherBenchDataset(path_to_zarr=OUTFILE, to_tensor=True)
 
     # test out num_workers speed up
-    dataloader = DataLoader(wbds, batch_size=5, shuffle=True, num_workers=10)
+    print("using torch DataLoader to sample mini-batches ...")
+    dataloader = DataLoader(wbds, batch_size=5, shuffle=True, num_workers=13)
     for i_batch, sample_batched in enumerate(dataloader):
         print(i_batch, sample_batched.shape)
-        if i_batch == 100:
+        if i_batch == 99:
             break
     # out = eval(f"{sys.argv[1]}()")
 
