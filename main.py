@@ -100,7 +100,8 @@ if __name__ == "__main__":
     print("initializing WeatherBenchDataset class ...")
     OUTPATH = "~/public/datasets/for_model_development/weatherbench2/era5/"
     OUTFILE = f"{OUTPATH}{ARRNAME[:-5]}_ZLEVS_T2M.zarr"
-    wbds = WeatherBenchDataset(path_to_zarr=OUTFILE, to_tensor=True)
+    wbds = WeatherBenchDataset(path_to_zarr=OUTFILE, to_tensor=True,
+            partition="train")
 
     # test out num_workers speed up
     test_dataloader = False

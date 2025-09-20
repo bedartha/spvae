@@ -16,20 +16,25 @@ class WeatherBenchDataset(Dataset):
     Custom class for the WeatherBench dataset.
     """
 
-    def __init__(self, path_to_zarr="./", to_tensor=True):
+    def __init__(self, path_to_zarr="./", to_tensor=True, partition="train"):
         """
         Arguments:
-            var_names (list of strings): List of variables to extract
-            levels (list of ints, optional): List of pressure levels, if reqd
-            root_dir  (string): Path to dataset archive
-            transform (callable, optional): Optional transforms to be used
+            path_to_zarr  (string): Path to dataset archive
+            to_tensor (callable, optional): Converts data to torch.Tensor
         """
         self.path = path_to_zarr
         self.to_tensor = to_tensor
+        self.partition = partition
         ds = xr.open_zarr(
                 path_to_zarr,
                 chunks={},
                 )
+        if partition == "train":
+            ds = ds.sel(time=slice("1959-01-01", "2019-12-31"))
+        elif partition == "val":
+            ds = ds.sel(time=slice("2020-01-01", "2021-12-31"))
+        elif partition == "test":
+            ds = ds.sel(time=slice("2022-01-01", "2023-12-31"))
 
         ds.chunk(chunks={"time": 50, "lat": 32, "lon": 64})
         self.ds = ds
