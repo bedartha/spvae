@@ -187,6 +187,22 @@ if __name__ == "__main__":
                 )
         x_ = vae(x)
 
+    # estimate the size of the vae model
+    est_model_size = True
+    if est_model_size:
+        print("estimating model size ...")
+        params = vae.parameters()
+        weights = []
+        for p in params:
+            weights.append(p)
+        total_w = 0
+        for w in weights:
+            w_sz = 1
+            for k in w.size():
+               w_sz *= k
+            total_w += w_sz
+        print("Total number of parameters in the model: %d" % total_w)
+
     # test out the patch decoder
     test_patch_decoder = True
     if test_patch_decoder:
