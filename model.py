@@ -53,6 +53,7 @@ class PatchEmbedding(nn.Module):
                         requires_grad=True,
                         )
                     )
+        self.lnorm = nn.LayerNorm(embed_dim)
         self.dropout = nn.Dropout(p=dropout)
 
     def forward(self, x):
@@ -78,6 +79,7 @@ class PatchEmbedding(nn.Module):
         # Unify the position with the patches
         # Patch + Position Embedding
         x = self.position_embeddings + x
+        x = self.lnorm(x)
         x = self.dropout(x)
         return x
 
@@ -277,6 +279,7 @@ class Encoder(nn.Module):
         logvar = self.conv1d_2(l.permute(0, 2, 1))
         sig = torch.exp(0.5 * logvar)
         z = mu + sig * self.N.sample(mu.shape)
+        self.kl = (sig**2 + mu**2 - torch.log(sig) - 1/2).sum()
         return z
 
 
@@ -376,3 +379,70 @@ class PatchDecoder(nn.Module):
                       )
         x = self.conv2d(x)
         return x
+
+
+class SPVAE(nn.Module):
+    """
+    Put it all together
+    """
+    def __init__(self, embed_dim, patch_size, num_patches, patch_dropout,
+                      in_channels, keep_channels, vae_latent_dim,
+                      sp_enc_latent_dims, sp_dec_latent_dims, sp_mlp_dims,
+                      sp_n_heads, sp_n_trnfr_layers, sp_dropouts,
+                      batch_size, input_size):
+        """initalize the model"""
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.patch_size = patch_size
+        self.num_patches = num_patches
+        self.patch_dropout = patch_dropout
+        self.in_channels = in_channels
+        self.keep_channels = keep_channels
+        self.vae_latent_dim = vae_latent_dim
+        self.sp_enc_latent_dims = sp_enc_latent_dims
+        self.sp_dec_latent_dims = sp_dec_latent_dims
+        self.sp_mlp_dims = sp_mlp_dims
+        self.sp_n_heads = sp_n_heads
+        self.sp_n_trnfr_layers = sp_n_trnfr_layers
+        self.sp_dropouts = sp_dropouts
+        self.batch_size = batch_size
+        self.input_size = input_size
+
+        self.spvae = nn.ModuleList(
+                    [
+                        PatchEmbedding(
+                                        embed_dim=self.embed_dim,
+                                        patch_size=self.patch_size,
+                                        num_patches=self.num_patches,
+                                        dropout=self.patch_dropout,
+                                        in_channels=self.in_channels,
+                                        keep_channels=self.keep_channels
+                                        ),
+                        VariationalAutoencoder(
+                                vae_latent_dim=self.vae_latent_dim,
+                                sp_enc_latent_dims=self.sp_enc_latent_dims,
+                                sp_dec_latent_dims=self.sp_dec_latent_dims,
+                                sp_embed_dim=self.embed_dim,
+                                sp_mlp_dims=self.sp_mlp_dims,
+                                sp_n_heads=self.sp_n_heads,
+                                sp_n_trnfr_layers=self.sp_n_trnfr_layers,
+                                sp_dropouts=self.sp_dropouts,
+                                batch_size=self.batch_size
+                                ),
+                        PatchDecoder(
+                                    embed_dim=self.embed_dim,
+                                    data_channels=self.in_channels,
+                                    num_patches=self.num_patches,
+                                    patch_size=self.patch_size,
+                                    input_size=self.input_size
+                                    )
+                        ]
+                )
+        self.patch_embedding = self.spvae[0]
+        self.vae = self.spvae[1]
+        self.patch_decoder = self.spvae[2]
+
+    def forward(self, x):
+        """forward pass"""
+        pe, vae, pd = self.spvae
+        return pd(vae(pe(x)))
