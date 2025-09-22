@@ -7,5 +7,6 @@ Stacked Perceiver Variational Autoencoder
 - [x] Encoder-Decoder
 - [x] Train
 - [x] Mixed precision computing
-- [ ] Distributed computing
-- [ ] Model checkpointing
+- [x] Distributed computing
+- [x] Model checkpointing
+- [ ] BUG: Loss values are all NaNs

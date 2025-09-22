@@ -237,6 +237,44 @@ class StackedPerceiver(nn.Module):
         return x
 
 
+class VariationalAutoencoder(nn.Module):
+    """
+    Set up the VAE class
+    """
+    def __init__(self, vae_latent_dim, sp_enc_latent_dims, sp_dec_latent_dims,
+                 sp_embed_dim, sp_mlp_dims, sp_n_heads, sp_n_trnfr_layers,
+                 sp_dropouts, batch_size):
+        """initialize the VAE class"""
+        super().__init__()
+        self.encoder = Encoder(
+                            vae_latent_dim=vae_latent_dim,
+                            sp_latent_dims=sp_enc_latent_dims,
+                            sp_embed_dim=sp_embed_dim,
+                            sp_mlp_dims=sp_mlp_dims,
+                            sp_n_heads=sp_n_heads,
+                            sp_n_trnfr_layers=sp_n_trnfr_layers,
+                            sp_dropouts=sp_dropouts,
+                            batch_size=batch_size
+                            )
+        self.decoder = Decoder(
+                            vae_latent_dim=vae_latent_dim,
+                            sp_latent_dims=sp_dec_latent_dims,
+                            sp_embed_dim=sp_embed_dim,
+                            sp_mlp_dims=sp_mlp_dims,
+                            sp_n_heads=sp_n_heads,
+                            sp_n_trnfr_layers=sp_n_trnfr_layers,
+                            sp_dropouts=sp_dropouts,
+                            batch_size=batch_size
+                            )
+
+    def forward(self, x):
+        """forward pass"""
+        z = self.encoder(x)
+        x = self.decoder(z)
+        self.kl = self.encoder.kl
+        return (x)
+
+
 class Encoder(nn.Module):
     """
     Encoder for the VAE
@@ -278,7 +316,10 @@ class Encoder(nn.Module):
         mu = self.conv1d_1(l.permute(0, 2, 1))
         logvar = self.conv1d_2(l.permute(0, 2, 1))
         sig = torch.exp(0.5 * logvar)
-        z = mu + sig * self.N.sample(mu.shape)
+        randn = self.N.sample(mu.shape)
+        device = torch.device('cuda')
+        randn = randn.to(device)
+        z = mu + sig * randn 
         self.kl = (sig**2 + mu**2 - torch.log(sig) - 1/2).sum()
         return z
 
@@ -310,43 +351,6 @@ class Decoder(nn.Module):
         l = l.permute(0, 2, 1)
         x = self.stacked_perceiver(l)
         return x
-
-
-class VariationalAutoencoder(nn.Module):
-    """
-    Set up the VAE class
-    """
-    def __init__(self, vae_latent_dim, sp_enc_latent_dims, sp_dec_latent_dims,
-                 sp_embed_dim, sp_mlp_dims, sp_n_heads, sp_n_trnfr_layers,
-                 sp_dropouts, batch_size):
-        """initialize the VAE class"""
-        super().__init__()
-        self.encoder = Encoder(
-                            vae_latent_dim=vae_latent_dim,
-                            sp_latent_dims=sp_enc_latent_dims,
-                            sp_embed_dim=sp_embed_dim,
-                            sp_mlp_dims=sp_mlp_dims,
-                            sp_n_heads=sp_n_heads,
-                            sp_n_trnfr_layers=sp_n_trnfr_layers,
-                            sp_dropouts=sp_dropouts,
-                            batch_size=batch_size
-                            )
-        self.decoder = Decoder(
-                            vae_latent_dim=vae_latent_dim,
-                            sp_latent_dims=sp_dec_latent_dims,
-                            sp_embed_dim=sp_embed_dim,
-                            sp_mlp_dims=sp_mlp_dims,
-                            sp_n_heads=sp_n_heads,
-                            sp_n_trnfr_layers=sp_n_trnfr_layers,
-                            sp_dropouts=sp_dropouts,
-                            batch_size=batch_size
-                            )
-
-    def forward(self, x):
-        """forward pass"""
-        z = self.encoder(x)
-        x = self.decoder(z)
-        return (x)
 
 
 class PatchDecoder(nn.Module):
@@ -408,8 +412,7 @@ class SPVAE(nn.Module):
         self.batch_size = batch_size
         self.input_size = input_size
 
-        self.spvae = nn.ModuleList(
-                    [
+        self.spvae = nn.Sequential(
                         PatchEmbedding(
                                         embed_dim=self.embed_dim,
                                         patch_size=self.patch_size,
@@ -436,7 +439,6 @@ class SPVAE(nn.Module):
                                     patch_size=self.patch_size,
                                     input_size=self.input_size
                                     )
-                        ]
                 )
         self.patch_embedding = self.spvae[0]
         self.vae = self.spvae[1]
@@ -444,5 +446,6 @@ class SPVAE(nn.Module):
 
     def forward(self, x):
         """forward pass"""
-        pe, vae, pd = self.spvae
-        return pd(vae(pe(x)))
+        out =  self.spvae(x)
+        self.kl = self.vae.kl
+        return out, self.kl
