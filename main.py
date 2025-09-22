@@ -223,11 +223,12 @@ if __name__ == "__main__":
 
     # train the vae model
     train_vae = True
+    verbose = False
     if train_vae:
         # params
-        EPOCHS = 50
-        BATCH_SIZE = 5
-        IN_CHANNELS = 1
+        EPOCHS = 1
+        BATCH_SIZE = 4
+        IN_CHANNELS = 4
         ## for embedding
         INPUT_SIZE = (64, 32)
         PATCH_SIZE = (4, 2)
@@ -237,29 +238,29 @@ if __name__ == "__main__":
         EMBED_DIM = 10
         PATCH_DROPOUT = 0.1
         ## for VAE
-        # VAE_LATENT_DIM = 128
-        VAE_LATENT_DIM = 64
-        SP_ENC_LATENT_DIMS = [128, 64]
-        SP_DEC_LATENT_DIMS = [64, 128, 256]
-        # SP_ENC_LATENT_DIMS = [512, 256]
-        # SP_DEC_LATENT_DIMS = [256, 512, 1024]
+        # VAE_LATENT_DIM = 64
+        # SP_ENC_LATENT_DIMS = [128, 64]
+        # SP_DEC_LATENT_DIMS = [64, 128, 256]
+        VAE_LATENT_DIM = 128
+        SP_ENC_LATENT_DIMS = [512, 256]
+        SP_DEC_LATENT_DIMS = [256, 512, 1024]
         SP_MLP_DIMS = [64, 64]
         SP_N_HEADS = [5, 5]
         SP_N_TRNFR_LAYERS = [7, 7]
         SP_DROPOUTS = [0.1, 0.1]
 
-        print("initializing WeatherBenchDataset class ...")
+        if verbose: print("initializing WeatherBenchDataset class ...")
         OUTPATH = "~/public/datasets/for_model_development/weatherbench2/era5/"
-        OUTFILE = f"{OUTPATH}{ARRNAME[:-5]}_Z500.zarr"
+        OUTFILE = f"{OUTPATH}{ARRNAME[:-5]}_ZLEVS_T2M.zarr"
         wb_train = WeatherBenchDataset(path_to_zarr=OUTFILE, to_tensor=True,
                                        partition="train")
         wb_val = WeatherBenchDataset(path_to_zarr=OUTFILE, to_tensor=True,
                                      partition="val")
-        print("set up train and val dataloaders ...")
+        if verbose: print("set up train and val dataloaders ...")
         train_loader = DataLoader(wb_train, batch_size=BATCH_SIZE,
-                                  shuffle=True, num_workers=50)
+                                  shuffle=True, num_workers=17)
         val_loader = DataLoader(wb_val, batch_size=BATCH_SIZE,
-                                shuffle=True, num_workers=50)
+                                shuffle=True, num_workers=17)
 
         # initalize model
         spvae = SPVAE(
@@ -278,32 +279,48 @@ if __name__ == "__main__":
                 )
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-        print("train the VAE ...")
+        if verbose: print("train the VAE ...")
         opt = torch.optim.Adam(spvae.parameters(), lr=0.001)
         scheduler = CosineAnnealingLR(opt, T_max=EPOCHS, eta_min=0.00001)
+        scaler = torch.amp.GradScaler("cuda")
         train_loss = np.zeros(EPOCHS)
         val_loss = np.zeros(EPOCHS)
         for epoch in range(EPOCHS):
-            print(f"epoch {epoch}")
-            print("train ...")
-            for X in tqdm(train_loader):
+            if verbose: print(f"epoch {epoch}")
+            if verbose: print("train ...")
+            for X in tqdm(train_loader, disable=(not verbose)):
                 opt.zero_grad()
-                data = X.to(device)
-                X_ = spvae(X)
-                loss = ((X - X_)**2).sum() + spvae.vae.encoder.kl
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(spvae.vae.parameters(), 1E4)
+                # Casts operations to mixed precision
+                with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
+                    loss = ((X - spvae(X))**2).sum() + spvae.vae.encoder.kl
+                    # Scales the loss, and calls backward()
+                    # to create scaled gradients
+                    scaler.scale(loss).backward()
+
+                    # Unscales gradients and calls
+                    # or skips optimizer.step()
+                    scaler.step(opt)
+
+                    # Updates the scale for next iteration
+                    scaler.update()
+                # data = X.to(device)
+                # X_ = spvae(X)
+                # loss = ((X - X_)**2).sum() + spvae.vae.encoder.kl
+                # loss.backward()
+                # torch.nn.utils.clip_grad_norm_(spvae.vae.parameters(), 1E4)
                 # print(loss)
-                opt.step()
-                scheduler.step()
+                # opt.step()
+                # scheduler.step()
             train_loss[epoch] = loss
-            print("validate...")
+            if verbose: print("validate...")
             spvae.eval()
             with torch.no_grad():
-                for X in tqdm(val_loader):
-                    data = X.to(device)
-                    X_ = spvae(X)
-                    loss = ((X - X_)**2).sum() + spvae.vae.encoder.kl
+                for X in tqdm(val_loader, disable=(not verbose)):
+                    # data = X.to(device)
+                    # X_ = spvae(X)
+                    # loss = ((X - X_)**2).sum() + spvae.vae.encoder.kl
+                    with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
+                        loss = ((X - spvae(X))**2).sum() + spvae.vae.encoder.kl
             val_loss[epoch] = loss
         np.savez("/home/bedartha/data/scratch/spvae_loss.npz",
                  train_loss=train_loss, val_loss=val_loss)

@@ -30,16 +30,18 @@ class WeatherBenchDataset(Dataset):
                 chunks={},
                 )
         if partition == "train":
-            ds = ds.sel(time=slice("1959-01-01", "2019-12-31"))
+            # ds = ds.sel(time=slice("1979-01-01", "2019-12-31"))
+            ds = ds.sel(time=slice("1979-01-01", "1979-12-31"))
             # ds = ds.sel(time=slice("1959-01-01", "1959-01-31"))
         elif partition == "val":
-            ds = ds.sel(time=slice("2020-01-01", "2021-12-31"))
+            # ds = ds.sel(time=slice("2020-01-01", "2021-12-31"))
+            ds = ds.sel(time=slice("2020-01-01", "2020-12-31"))
             # ds = ds.sel(time=slice("2020-01-01", "2020-01-31"))
         elif partition == "test":
             ds = ds.sel(time=slice("2022-01-01", "2023-12-31"))
 
-        # ds.chunk(chunks={"time": 50, "lat": 32, "lon": 64})
-        ds.chunk(chunks={"time": 50, "latitude": 32, "longitude": 64})
+        ds.chunk(chunks={"time": 50, "lat": 32, "lon": 64})
+        # ds.chunk(chunks={"time": 50, "latitude": 32, "longitude": 64})
         self.ds = ds
 
 

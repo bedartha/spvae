@@ -5,4 +5,7 @@ Stacked Perceiver Variational Autoencoder
 - [x] Dataset class
 - [x] Patch embedding
 - [x] Encoder-Decoder
-- [ ] Train
+- [x] Train
+- [x] Mixed precision computing
+- [ ] Distributed computing
+- [ ] Model checkpointing
