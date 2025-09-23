@@ -9,4 +9,7 @@ Stacked Perceiver Variational Autoencoder
 - [x] Mixed precision computing
 - [x] Distributed computing
 - [x] Model checkpointing
-- [ ] BUG: Loss values are all NaNs
+- [x] BUG: Loss values are all NaNs
+- [ ] Weight loss by area of each of grid cell
+- [ ] Per-variable weight for loss
+- [ ] Refactor code; clean it up

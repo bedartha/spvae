@@ -18,7 +18,7 @@ from torch import nn
 
 class PatchEmbedding(nn.Module):
     def __init__(self, embed_dim, patch_size, num_patches, in_channels,
-                 dropout, keep_channels=False):
+                 dropout, keep_channels, input_size):
         super().__init__()
         self.embed_dim = embed_dim
         self.patch_size = patch_size
@@ -53,11 +53,14 @@ class PatchEmbedding(nn.Module):
                         requires_grad=True,
                         )
                     )
-        self.lnorm = nn.LayerNorm(embed_dim)
+        W, H = input_size[0], input_size[1]
+        self.lnorm1 = nn.LayerNorm([W, H])
+        self.lnorm2 = nn.LayerNorm(embed_dim)
         self.dropout = nn.Dropout(p=dropout)
 
     def forward(self, x):
         # Create the patches
+        x = self.lnorm1(x)
         x = self.patcher(x)
         if self.keep_channels:
             # reshape the conv2d output so that it correponds to in_channels
@@ -79,7 +82,7 @@ class PatchEmbedding(nn.Module):
         # Unify the position with the patches
         # Patch + Position Embedding
         x = self.position_embeddings + x
-        x = self.lnorm(x)
+        x = self.lnorm2(x)
         x = self.dropout(x)
         return x
 
@@ -169,7 +172,10 @@ class PerceiverIO(nn.Module):
                                   )
 
     def forward(self, x, l):
-        out = self.attention(x, l)
+        if x.shape[0] == l.shape[0]:
+            out = self.attention(x, l)
+        else:
+            out = self.attention(x, l[:x.shape[0], :, :])
         return out
 
 
@@ -345,11 +351,13 @@ class Decoder(nn.Module):
                                             dropouts=sp_dropouts,
                                             batch_size=batch_size
                                             )
+        self.lnorm = nn.LayerNorm(sp_embed_dim)
 
     def forward(self, z):
         l = self.conv1d(z)
         l = l.permute(0, 2, 1)
         x = self.stacked_perceiver(l)
+        x = self.lnorm(x)
         return x
 
 
@@ -373,6 +381,8 @@ class PatchDecoder(nn.Module):
                                          dilation=1,
                                          #groups=data_channels
                                          )
+        # W, H = input_size[0], input_size[1]
+        # self.lnorm = nn.LayerNorm([W, H])
 
     def forward(self, x):
         """forward pass"""
@@ -382,6 +392,7 @@ class PatchDecoder(nn.Module):
                       int(self.input_size[1] / self.patch_size[1])
                       )
         x = self.conv2d(x)
+        # x = self.lnorm(x)
         return x
 
 
@@ -419,7 +430,8 @@ class SPVAE(nn.Module):
                                         num_patches=self.num_patches,
                                         dropout=self.patch_dropout,
                                         in_channels=self.in_channels,
-                                        keep_channels=self.keep_channels
+                                        keep_channels=self.keep_channels,
+                                        input_size=self.input_size
                                         ),
                         VariationalAutoencoder(
                                 vae_latent_dim=self.vae_latent_dim,
