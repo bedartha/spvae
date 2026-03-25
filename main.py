@@ -223,35 +223,41 @@ if __name__ == "__main__":
 
     # train the vae model
     train_vae = True
-    verbose = False
+    verbose = True
     if train_vae:
         # params
         EPOCHS = 1
-        BATCH_SIZE = 4
-        IN_CHANNELS = 4
+        BATCH_SIZE = 1
+        IN_CHANNELS = 20
         ## for embedding
-        INPUT_SIZE = (64, 32)
-        PATCH_SIZE = (4, 2)
+        # INPUT_SIZE = (64, 32)
+        INPUT_SIZE = (240, 121)
+        OUTPUT_PADDING = [0, 1] # necessary for the 121 case
+        PATCH_SIZE = (16, 8)
         NUM_PATCHES = int(
-                (INPUT_SIZE[0] / PATCH_SIZE[0]) * (INPUT_SIZE[1] / PATCH_SIZE[1])
-                )
-        EMBED_DIM = 10
+                (INPUT_SIZE[0] / PATCH_SIZE[0])
+                ) * int(
+                        (INPUT_SIZE[1] / PATCH_SIZE[1])
+                        )
+        EMBED_DIM = 48
         PATCH_DROPOUT = 0.1
         ## for VAE
         # VAE_LATENT_DIM = 64
         # SP_ENC_LATENT_DIMS = [128, 64]
         # SP_DEC_LATENT_DIMS = [64, 128, 256]
         VAE_LATENT_DIM = 128
-        SP_ENC_LATENT_DIMS = [512, 256]
-        SP_DEC_LATENT_DIMS = [256, 512, 1024]
+        SP_ENC_LATENT_DIMS = [1024, 256]
+        SP_DEC_LATENT_DIMS = [256, 1024, NUM_PATCHES*IN_CHANNELS]
         SP_MLP_DIMS = [64, 64]
-        SP_N_HEADS = [5, 5]
-        SP_N_TRNFR_LAYERS = [7, 7]
+        SP_N_HEADS = [4, 2]
+        SP_N_TRNFR_LAYERS = [4, 4]
         SP_DROPOUTS = [0.1, 0.1]
 
         if verbose: print("initializing WeatherBenchDataset class ...")
         OUTPATH = "~/public/datasets/for_model_development/weatherbench2/era5/"
-        OUTFILE = f"{OUTPATH}{ARRNAME[:-5]}_ZLEVS_T2M.zarr"
+        # FNAME = "1979-2022_01_10-6h-64x32_equiangular_conservative_MWE.zarr"
+        FNAME = "1979-2022_01_10-6h-240x121_equiangular_with_poles_conservative_MWE.zarr"
+        OUTFILE = f"{OUTPATH}{FNAME}"
         wb_train = WeatherBenchDataset(path_to_zarr=OUTFILE, to_tensor=True,
                                        partition="train")
         wb_val = WeatherBenchDataset(path_to_zarr=OUTFILE, to_tensor=True,
@@ -275,9 +281,10 @@ if __name__ == "__main__":
                       sp_n_trnfr_layers=SP_N_TRNFR_LAYERS,
                       sp_dropouts=SP_DROPOUTS,
                       batch_size=BATCH_SIZE,
-                      input_size=INPUT_SIZE
+                      input_size=INPUT_SIZE,
+                      output_padding=OUTPUT_PADDING
                 )
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        spvae = spvae.to('cuda')
 
         if verbose: print("train the VAE ...")
         opt = torch.optim.Adam(spvae.parameters(), lr=0.001)
@@ -289,10 +296,14 @@ if __name__ == "__main__":
             if verbose: print(f"epoch {epoch}")
             if verbose: print("train ...")
             for X in tqdm(train_loader, disable=(not verbose)):
+                X = X.to('cuda')
                 opt.zero_grad()
                 # Casts operations to mixed precision
                 with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
-                    loss = ((X - spvae(X))**2).sum() + spvae.vae.encoder.kl
+                    X_, kl = spvae(X)
+                    X_ = X_.to('cuda')
+                    kl = kl.to('cuda')
+                    loss = ((X - X_)**2).sum() + kl
                     # Scales the loss, and calls backward()
                     # to create scaled gradients
                     scaler.scale(loss).backward()
@@ -314,13 +325,15 @@ if __name__ == "__main__":
             train_loss[epoch] = loss
             if verbose: print("validate...")
             spvae.eval()
+            # spvae = spvae.to('cuda')
             with torch.no_grad():
                 for X in tqdm(val_loader, disable=(not verbose)):
-                    # data = X.to(device)
-                    # X_ = spvae(X)
-                    # loss = ((X - X_)**2).sum() + spvae.vae.encoder.kl
+                    X = X.to('cuda')
                     with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
-                        loss = ((X - spvae(X))**2).sum() + spvae.vae.encoder.kl
+                        X_, kl = spvae(X)
+                        X_ = X_.to('cuda')
+                        kl = kl.to('cuda')
+                        loss = ((X - X_)**2).sum() + kl
             val_loss[epoch] = loss
         np.savez("/home/bedartha/data/scratch/spvae_loss.npz",
                  train_loss=train_loss, val_loss=val_loss)

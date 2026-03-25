@@ -3,6 +3,7 @@
 
 import os
 import time
+import datetime as dt
 
 from tqdm import tqdm
 import numpy as np
@@ -27,35 +28,37 @@ verbose = False
 # file info
 HOMEDIR = "/home/bedartha/"
 DATADIR = "public/datasets/for_model_development/weatherbench2/era5/"
-ARRNAME = "1959-2023_01_10-6h-64x32_equiangular_conservative_ZLEVS_T2M.zarr"
+# ARRNAME = "1979-2022_01_10-6h-64x32_equiangular_conservative_MWE.zarr"
+ARRNAME = "1979-2022_01_10-6h-240x121_equiangular_with_poles_conservative_MWE.zarr"
 
 # params
-EPOCHS = 1
+EPOCHS = 50
 BATCH_SIZE = 8 #// world_size
-IN_CHANNELS = 4
+IN_CHANNELS = 20
 NUM_WORKERS = 32
 LEARNING_RATE = 0.001
 LEARNING_RATE_MIN = 0.00001
 SAVE_EVERY = 5
 ## for embedding
-INPUT_SIZE = (64, 32)
-PATCH_SIZE = (4, 2)
-NUM_PATCHES = int((INPUT_SIZE[0] / PATCH_SIZE[0]) * (INPUT_SIZE[1] / PATCH_SIZE[1]))
-EMBED_DIM = 10
+INPUT_SIZE = (240, 121)
+OUTPUT_PADDING = [0, 1]
+PATCH_SIZE = (16, 8)
+NUM_PATCHES = int((INPUT_SIZE[0] / PATCH_SIZE[0])) * int((INPUT_SIZE[1] / PATCH_SIZE[1]))
+EMBED_DIM = 48
 PATCH_DROPOUT = 0.1
 VAE_LATENT_DIM = 128
-SP_ENC_LATENT_DIMS = [512, 256]
-SP_DEC_LATENT_DIMS = [256, 512, 1024]
+SP_ENC_LATENT_DIMS = [1024, 256]
+SP_DEC_LATENT_DIMS = [256, 1024, NUM_PATCHES*IN_CHANNELS]
 SP_MLP_DIMS = [64, 64]
-SP_N_HEADS = [5, 5]
-SP_N_TRNFR_LAYERS = [7, 7]
+SP_N_HEADS = [4, 2]
+SP_N_TRNFR_LAYERS = [4, 4]
 SP_DROPOUTS = [0.1, 0.1]
 
 
 def set_ddp(rank, world_size, master_addr="127.0.0.1", master_port="29500"):
     """set up DDP"""
-    os.environ["MASTER_ADDR"] = master_addr
-    os.environ["MASTER_PORT"] = master_port
+    # os.environ["MASTER_ADDR"] = master_addr
+    # os.environ["MASTER_PORT"] = master_port
     torch.cuda.set_device(rank)
     dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
     return None
@@ -89,7 +92,8 @@ def set_model(local_rank):
                   sp_n_trnfr_layers=SP_N_TRNFR_LAYERS,
                   sp_dropouts=SP_DROPOUTS,
                   batch_size=BATCH_SIZE,
-                  input_size=INPUT_SIZE
+                  input_size=INPUT_SIZE,
+                  output_padding=[0, 1]
             )
     torch.cuda.set_device(local_rank)
     torch.cuda.empty_cache()
@@ -107,14 +111,14 @@ def set_optimizer(spvae):
     return opt, scaler
 
 
-def train(train_loader, model, optim, local_rank, save_every, scaler, verbose,
-          nname):
+def train(train_loader, val_loader, model, optim, local_rank, save_every, scaler, verbose,
+          nname, global_rank):
     """train the model"""
-    print("train ...")
     train_loss = np.zeros(EPOCHS)
     for epoch in range(EPOCHS):
         print(f"Epoch {epoch} for process {local_rank} on node {nname}")
-        print(os.environ["SLURM_PROCID"])
+        print(f"global rank = {global_rank}; local rank = {local_rank}")
+        print("train ...")
         model.train()
         for X in train_loader:
             X = X.to('cuda:' + str(local_rank))
@@ -128,28 +132,8 @@ def train(train_loader, model, optim, local_rank, save_every, scaler, verbose,
                 scaler.step(optim)
                 scaler.update()
         train_loss[epoch] = loss
-        if local_rank == 0:
-            if epoch % save_every == 0:
-                FNAME = f"{HOMEDIR}data/scratch/chkpt_epoch{epoch}_rank{local_rank}.tar"
-                torch.save(
-                        {
-                            "epoch": epoch,
-                            "model_state_dict":model.state_dict(),
-                            "optimizer_state_dict": optim.state_dict(),
-                            "loss": loss
-                            },
-                        FNAME
-                        )
-            if verbose: print("saved checkpoint to %s" %FNAME)
-    return train_loss
-
-
-def validate(val_loader, model, local_rank, verbose, nname):
-    """validate the model"""
-    print("validate ...")
-    val_loss = np.zeros(EPOCHS)
-    for epoch in range(EPOCHS):
-        print(f"Epoch {epoch} for process {local_rank} on node {nname}")
+        print("validate ...")
+        val_loss = np.zeros(EPOCHS)
         model.eval()
         with torch.no_grad():
             for X in val_loader:
@@ -160,12 +144,31 @@ def validate(val_loader, model, local_rank, verbose, nname):
                     kl = kl.to('cuda:' + str(local_rank))
                     loss = ((X - X_)**2).sum() + kl #spvae.vae.encoder.kl
         val_loss[epoch] = loss
-    return val_loss
+        #save checkpoint
+        if local_rank == 0 and global_rank == 0:
+            print(f"saving model checkpoint after {EPOCH} epochs")
+            print(f"since this process has rank {local_rank} on node {nname}")
+            if epoch % save_every == 0:
+                path = f"{HOMEDIR}data/scratch/" 
+                tstamp = dt.datetime.today().strftime("%Y%m%d_%H%M%S")
+                FNAME = f"chkpt_epoch{epoch}_rank{local_rank}_{tstamp}.tar"
+                torch.save(
+                        {
+                            "epoch": epoch,
+                            "model_state_dict":model.state_dict(),
+                            "optimizer_state_dict": optim.state_dict(),
+                            "loss": loss
+                            },
+                        path + FNAME
+                        )
+            if verbose: print("saved checkpoint to %s" %FNAME)
+    return train_loss, val_loss
 
 
 def main(rank, world_size, total_epochs, save_every, nname):
     """runs the main code for training and validation"""
     set_ddp(rank, world_size)
+    global_rank = int(os.environ["SLURM_PROCID"])
 
     PATH_TO_ZARR = f"{HOMEDIR}{DATADIR}{ARRNAME}"
     trn_dl = get_dataloader(path_to_zarr=PATH_TO_ZARR, to_tensor=True,
@@ -178,15 +181,17 @@ def main(rank, world_size, total_epochs, save_every, nname):
                             shuffle=False, verbose=verbose)
     spvae = set_model(rank)
     opt, scaler = set_optimizer(spvae)
-    train_loss = train(trn_dl, spvae, opt, rank, save_every, scaler, verbose,
-                       nname)
-    val_loss = validate(val_dl, spvae, rank, verbose, nname)
-    if rank == 0:
+    tl, vl = train(trn_dl, val_dl, spvae, opt, rank, save_every, scaler, verbose,
+                   nname, global_rank)
+    # val_loss = validate(val_dl, spvae, rank, verbose, nname)
+    if global_rank == 0 and rank == 0:
         print("saving loss arrays to NPZ file in scratch ...")
-        FNAME = "/home/bedartha/data/scratch/spvae_loss.npz"
+        print(f"since this process has rank {rank} on node {nname}")
+        tstamp = dt.datetime.today().strftime("%Y%m%d_%H%M%S")
+        FNAME = f"/home/bedartha/data/scratch/spvae_loss_{tstamp}.npz"
         np.savez(FNAME,
-                 train_loss=train_loss / len(trn_dl),
-                 val_loss=val_loss / len(val_dl))
+                 train_loss=tl / len(trn_dl),
+                 val_loss=vl / len(val_dl))
         print("saved to: %s" % FNAME)
     dist.destroy_process_group()
     print(f"done with process {rank} of {world_size} on node {nname}")
@@ -195,7 +200,6 @@ def main(rank, world_size, total_epochs, save_every, nname):
 
 if __name__ == "__main__":
     alloc_nodes = os.environ["SLURM_NODELIST"]
-    print(f"List of allocated nodes: {alloc_nodes}")
     nname = os.environ["SLURMD_NODENAME"]
     world_size = torch.cuda.device_count()
     print(f"spawning {world_size} processes on node {nname}")

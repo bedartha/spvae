@@ -1,6 +1,6 @@
 """
 Defines the classes necessary for the model implementation
-----------------------------------------------------------
+==========================================================
 
 Patch Embedding code from:
     https://medium.com/@fernandopalominocobo/demystifying-visual-transformersi\
@@ -10,7 +10,28 @@ Perceiver code from:
 Variational Autoencoder code from:
     https://avandekleut.github.io/vae/
 
-(c) 2025 Bedartha Goswami <bedartha.goswami@iiserpune.ac.in>
+Inherticance Structure
+----------------------
+- SPVAE
+  |- PatchEmbedding
+  |- VariationalAutoencoder
+  |  |- Encoder
+  |  |  |- StackedPerceiver
+  |  |  |- Conv1d
+  |  |- Decoder
+  |  |  |- StackedPerceiver
+  |  |  |- ConvTranspose1d
+  |- PatchDecoder
+
+- StackedPerceiver
+  |- PerceiverBlock
+  |  |- LatentTransformer
+  |  |  |- PerceiverAttention
+  |  |- PerceiverIO
+  |  |  |- PerceiverAttention
+
+
+(c) 2026 Bedartha Goswami <bedartha.goswami@iiserpune.ac.in>
 """
 
 import torch
@@ -366,7 +387,7 @@ class PatchDecoder(nn.Module):
     remaps the tokens back to grid space
     """
     def __init__(self, embed_dim, data_channels, num_patches, patch_size,
-                 input_size):
+                 input_size, output_padding):
         """initialize the patch decoder"""
         super().__init__()
         self.embed_dim = embed_dim
@@ -374,11 +395,13 @@ class PatchDecoder(nn.Module):
         self.num_patches = num_patches
         self.patch_size = patch_size
         self.input_size = input_size
+        self.output_padding = output_padding
         self.conv2d = nn.ConvTranspose2d(in_channels=embed_dim * data_channels,
                                          out_channels=data_channels,
                                          kernel_size=patch_size,
                                          stride=patch_size,
-                                         dilation=1,
+                                         dilation=[1, 1],
+                                         output_padding=output_padding
                                          #groups=data_channels
                                          )
         # W, H = input_size[0], input_size[1]
@@ -404,7 +427,7 @@ class SPVAE(nn.Module):
                       in_channels, keep_channels, vae_latent_dim,
                       sp_enc_latent_dims, sp_dec_latent_dims, sp_mlp_dims,
                       sp_n_heads, sp_n_trnfr_layers, sp_dropouts,
-                      batch_size, input_size):
+                      batch_size, input_size, output_padding):
         """initalize the model"""
         super().__init__()
         self.embed_dim = embed_dim
@@ -422,6 +445,7 @@ class SPVAE(nn.Module):
         self.sp_dropouts = sp_dropouts
         self.batch_size = batch_size
         self.input_size = input_size
+        self.output_padding = output_padding
 
         self.spvae = nn.Sequential(
                         PatchEmbedding(
@@ -449,7 +473,8 @@ class SPVAE(nn.Module):
                                     data_channels=self.in_channels,
                                     num_patches=self.num_patches,
                                     patch_size=self.patch_size,
-                                    input_size=self.input_size
+                                    input_size=self.input_size,
+                                    output_padding=self.output_padding
                                     )
                 )
         self.patch_embedding = self.spvae[0]

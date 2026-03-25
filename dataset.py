@@ -11,6 +11,22 @@ import torch
 from torch.utils.data import Dataset
 
 
+single_lev_var_list = [
+        "10m_u_component_of_wind",
+        "10m_v_component_of_wind",
+        "2m_temperature",
+        "surface_pressure",
+        "total_column_water_vapour",
+        ]
+pressure_lev_var_list = [
+        "geopotential",
+        "specific_humidity",
+        "temperature",
+        "u_component_of_wind",
+        "v_component_of_wind"
+        ]
+
+
 class WeatherBenchDataset(Dataset):
     """
     Custom class for the WeatherBench dataset.
@@ -29,19 +45,31 @@ class WeatherBenchDataset(Dataset):
                 path_to_zarr,
                 chunks={},
                 )
+        
+        # reshape the dataset so that the pressure level dimension is
+        # collapsed
+        new_vars = {}
+        for var in pressure_lev_var_list:
+            for lev in ds['level'].data:
+                new_var = f"{var}_{lev}hpa"
+                new_vars[new_var] = ds[var].sel(level=lev).drop_vars('level')
+        for var in single_lev_var_list:
+            new_vars[var] = ds[var]
+        ds = xr.Dataset(new_vars)
+
         if partition == "train":
-            # ds = ds.sel(time=slice("1979-01-01", "2019-12-31"))
-            ds = ds.sel(time=slice("1979-01-01", "1979-12-31"))
+            ds = ds.sel(time=slice("1979-01-01", "2019-12-31"))
+            # ds = ds.sel(time=slice("1979-01-01", "1979-12-31"))
             # ds = ds.sel(time=slice("1979-01-01", "1979-01-31"))
         elif partition == "val":
-            # ds = ds.sel(time=slice("2020-01-01", "2021-12-31"))
             ds = ds.sel(time=slice("2020-01-01", "2020-12-31"))
+            # ds = ds.sel(time=slice("2020-01-01", "2020-12-31"))
             # ds = ds.sel(time=slice("2020-01-01", "2020-01-31"))
         elif partition == "test":
             ds = ds.sel(time=slice("2022-01-01", "2023-12-31"))
 
         # ds.chunk(chunks={"time": 50, "lat": 32, "lon": 64})
-        ds.chunk(chunks={"time": 50, "lat": 16, "lon": 32})
+        ds.chunk(chunks={"time": 50, "latitude": 16, "longitude": 32})
         # ds.chunk(chunks={"time": 50, "latitude": 32, "longitude": 64})
         self.ds = ds
 
