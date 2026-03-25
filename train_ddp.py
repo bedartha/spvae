@@ -146,7 +146,7 @@ def train(train_loader, val_loader, model, optim, local_rank, save_every, scaler
         val_loss[epoch] = loss
         #save checkpoint
         if local_rank == 0 and global_rank == 0:
-            print(f"saving model checkpoint after {EPOCH} epochs")
+            print(f"saving model checkpoint at {epoch} epochs")
             print(f"since this process has rank {local_rank} on node {nname}")
             if epoch % save_every == 0:
                 path = f"{HOMEDIR}data/scratch/" 
