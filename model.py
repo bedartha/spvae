@@ -10,8 +10,8 @@ Perceiver code from:
 Variational Autoencoder code from:
     https://avandekleut.github.io/vae/
 
-Inherticance Structure
-----------------------
+Inheritance Structure
+---------------------
 - SPVAE
   |- PatchEmbedding
   |- VariationalAutoencoder
@@ -19,9 +19,10 @@ Inherticance Structure
   |  |  |- StackedPerceiver
   |  |  |- Conv1d
   |  |- Decoder
-  |  |  |- StackedPerceiver
   |  |  |- ConvTranspose1d
+  |  |  |- StackedPerceiver
   |- PatchDecoder
+  |  |  |- ConvTranspose1d
 
 - StackedPerceiver
   |- PerceiverBlock
@@ -152,54 +153,6 @@ class PerceiverAttention(nn.Module):
         return out
 
 
-class LatentTransformer(nn.Module):
-    """Latent transformer module with n_layers count of decoders.
-    """
-    def __init__(self, embed_dim, mlp_dim, n_heads, dropout, n_layers):
-        super().__init__()
-        self.transformer = nn.ModuleList(
-                [
-                    PerceiverAttention(
-                        embed_dim=embed_dim,
-                        mlp_dim=mlp_dim,
-                        n_heads=n_heads,
-                        dropout=dropout
-                        )
-                    for l in range(n_layers)
-                    ]
-                )
-
-    def forward(self, l):
-        for trnfr in self.transformer:
-            l = trnfr(l, l)
-        return l
-
-
-class PerceiverIO(nn.Module):
-    """
-    Implements the Perceiver IO block
-    """
-    def __init__(self, embed_dim,  mlp_dim, n_heads, dropout):
-        """initialize perceiver io class"""
-        super().__init__()
-        self.embed_dim = embed_dim
-        self.mlp_dim = mlp_dim
-        self.n_heads = n_heads
-        self.attention = PerceiverAttention(
-                                      embed_dim=embed_dim,
-                                      mlp_dim=mlp_dim,
-                                      n_heads=n_heads,
-                                      dropout=dropout
-                                  )
-
-    def forward(self, x, l):
-        if x.shape[0] == l.shape[0]:
-            out = self.attention(x, l)
-        else:
-            out = self.attention(x, l[:x.shape[0], :, :])
-        return out
-
-
 class PerceiverBlock(nn.Module):
     """
     Perceiver Block with the Perceiver IO module and the Latent Transformer
@@ -215,23 +168,71 @@ class PerceiverBlock(nn.Module):
                             mean=0, std=0.02, a=-2, b=2
                         )
                     )
-        self.perceiver_io = PerceiverIO(embed_dim=embed_dim,
-                                        mlp_dim=mlp_dim,
-                                        n_heads=n_heads,
-                                        dropout=dropout
-                                        )
-        self.latent_trnfr = LatentTransformer(embed_dim=embed_dim,
-                                              mlp_dim=mlp_dim,
-                                              n_heads=n_heads,
-                                              n_layers=n_layers,
-                                              dropout=dropout
-                                              )
+        self.perceiver_io = self.PerceiverIO(embed_dim=embed_dim,
+                                             mlp_dim=mlp_dim,
+                                             n_heads=n_heads,
+                                             dropout=dropout
+                                             )
+        self.latent_trnfr = self.LatentTransformer(embed_dim=embed_dim,
+                                                   mlp_dim=mlp_dim,
+                                                   n_heads=n_heads,
+                                                   n_layers=n_layers,
+                                                   dropout=dropout
+                                                   )
 
     def forward(self, x):
         """forward pass"""
         l = self.perceiver_io(x, self.latent)
         out = self.latent_trnfr(l)
         return out
+
+
+    class LatentTransformer(nn.Module):
+        """Latent transformer module with n_layers count of decoders.
+        """
+        def __init__(self, embed_dim, mlp_dim, n_heads, dropout, n_layers):
+            super().__init__()
+            self.transformer = nn.ModuleList(
+                    [
+                        PerceiverAttention(
+                            embed_dim=embed_dim,
+                            mlp_dim=mlp_dim,
+                            n_heads=n_heads,
+                            dropout=dropout
+                            )
+                        for l in range(n_layers)
+                        ]
+                    )
+
+        def forward(self, l):
+            for trnfr in self.transformer:
+                l = trnfr(l, l)
+            return l
+
+
+    class PerceiverIO(nn.Module):
+        """
+        Implements the Perceiver IO block
+        """
+        def __init__(self, embed_dim,  mlp_dim, n_heads, dropout):
+            """initialize perceiver io class"""
+            super().__init__()
+            self.embed_dim = embed_dim
+            self.mlp_dim = mlp_dim
+            self.n_heads = n_heads
+            self.attention = PerceiverAttention(
+                                          embed_dim=embed_dim,
+                                          mlp_dim=mlp_dim,
+                                          n_heads=n_heads,
+                                          dropout=dropout
+                                      )
+
+        def forward(self, x, l):
+            if x.shape[0] == l.shape[0]:
+                out = self.attention(x, l)
+            else:
+                out = self.attention(x, l[:x.shape[0], :, :])
+            return out
 
 
 class StackedPerceiver(nn.Module):
@@ -273,26 +274,26 @@ class VariationalAutoencoder(nn.Module):
                  sp_dropouts, batch_size):
         """initialize the VAE class"""
         super().__init__()
-        self.encoder = Encoder(
-                            vae_latent_dim=vae_latent_dim,
-                            sp_latent_dims=sp_enc_latent_dims,
-                            sp_embed_dim=sp_embed_dim,
-                            sp_mlp_dims=sp_mlp_dims,
-                            sp_n_heads=sp_n_heads,
-                            sp_n_trnfr_layers=sp_n_trnfr_layers,
-                            sp_dropouts=sp_dropouts,
-                            batch_size=batch_size
-                            )
-        self.decoder = Decoder(
-                            vae_latent_dim=vae_latent_dim,
-                            sp_latent_dims=sp_dec_latent_dims,
-                            sp_embed_dim=sp_embed_dim,
-                            sp_mlp_dims=sp_mlp_dims,
-                            sp_n_heads=sp_n_heads,
-                            sp_n_trnfr_layers=sp_n_trnfr_layers,
-                            sp_dropouts=sp_dropouts,
-                            batch_size=batch_size
-                            )
+        self.encoder = self.Encoder(
+                                    vae_latent_dim=vae_latent_dim,
+                                    sp_latent_dims=sp_enc_latent_dims,
+                                    sp_embed_dim=sp_embed_dim,
+                                    sp_mlp_dims=sp_mlp_dims,
+                                    sp_n_heads=sp_n_heads,
+                                    sp_n_trnfr_layers=sp_n_trnfr_layers,
+                                    sp_dropouts=sp_dropouts,
+                                    batch_size=batch_size
+                                    )
+        self.decoder = self.Decoder(
+                                    vae_latent_dim=vae_latent_dim,
+                                    sp_latent_dims=sp_dec_latent_dims,
+                                    sp_embed_dim=sp_embed_dim,
+                                    sp_mlp_dims=sp_mlp_dims,
+                                    sp_n_heads=sp_n_heads,
+                                    sp_n_trnfr_layers=sp_n_trnfr_layers,
+                                    sp_dropouts=sp_dropouts,
+                                    batch_size=batch_size
+                                    )
 
     def forward(self, x):
         """forward pass"""
@@ -302,84 +303,84 @@ class VariationalAutoencoder(nn.Module):
         return (x)
 
 
-class Encoder(nn.Module):
-    """
-    Encoder for the VAE
-    """
-    def __init__(self, vae_latent_dim, sp_latent_dims, sp_embed_dim,
-                 sp_mlp_dims, sp_n_heads, sp_n_trnfr_layers, sp_dropouts,
-                 batch_size):
-        """initialize the VAE encoder"""
-        super().__init__()
-        self.stacked_perceiver = StackedPerceiver(
-                                            embed_dim=sp_embed_dim,
-                                            latent_dims=sp_latent_dims,
-                                            mlp_dims=sp_mlp_dims,
-                                            n_heads=sp_n_heads,
-                                            n_trnfr_layers=sp_n_trnfr_layers,
-                                            dropouts=sp_dropouts,
-                                            batch_size=batch_size
-                                            )
-        conv1d_ks = int(sp_latent_dims[-1] / vae_latent_dim)
-        self.conv1d_1 = nn.Conv1d(in_channels=sp_embed_dim,
-                                  out_channels=1,
-                                  kernel_size=conv1d_ks,
-                                  stride=conv1d_ks)
-        self.conv1d_2 = nn.Conv1d(in_channels=sp_embed_dim,
-                                  out_channels=1,
-                                  kernel_size=conv1d_ks,
-                                  stride=conv1d_ks)
+    class Encoder(nn.Module):
+        """
+        Encoder for the VAE
+        """
+        def __init__(self, vae_latent_dim, sp_latent_dims, sp_embed_dim,
+                     sp_mlp_dims, sp_n_heads, sp_n_trnfr_layers, sp_dropouts,
+                     batch_size):
+            """initialize the VAE encoder"""
+            super().__init__()
+            self.stacked_perceiver = StackedPerceiver(
+                                                embed_dim=sp_embed_dim,
+                                                latent_dims=sp_latent_dims,
+                                                mlp_dims=sp_mlp_dims,
+                                                n_heads=sp_n_heads,
+                                                n_trnfr_layers=sp_n_trnfr_layers,
+                                                dropouts=sp_dropouts,
+                                                batch_size=batch_size
+                                                )
+            conv1d_ks = int(sp_latent_dims[-1] / vae_latent_dim)
+            self.conv1d_1 = nn.Conv1d(in_channels=sp_embed_dim,
+                                      out_channels=1,
+                                      kernel_size=conv1d_ks,
+                                      stride=conv1d_ks)
+            self.conv1d_2 = nn.Conv1d(in_channels=sp_embed_dim,
+                                      out_channels=1,
+                                      kernel_size=conv1d_ks,
+                                      stride=conv1d_ks)
 
-        self.N = torch.distributions.Normal(0, 1)
-        self.N.loc = self.N.loc
-        self.N.scale = self.N.scale
-        self.kl = 0
+            self.N = torch.distributions.Normal(0, 1)
+            self.N.loc = self.N.loc
+            self.N.scale = self.N.scale
+            self.kl = 0
 
-    def forward(self, x):
-        """forward pass"""
-        l = self.stacked_perceiver(x)
-        # permute the patch dimension and the embedding dimension so that
-        # conv1d processes each embedding dimension as a channel
-        mu = self.conv1d_1(l.permute(0, 2, 1))
-        logvar = self.conv1d_2(l.permute(0, 2, 1))
-        sig = torch.exp(0.5 * logvar)
-        randn = self.N.sample(mu.shape)
-        device = torch.device('cuda')
-        randn = randn.to(device)
-        z = mu + sig * randn 
-        self.kl = (sig**2 + mu**2 - torch.log(sig) - 1/2).sum()
-        return z
+        def forward(self, x):
+            """forward pass"""
+            l = self.stacked_perceiver(x)
+            # permute the patch dimension and the embedding dimension so that
+            # conv1d processes each embedding dimension as a channel
+            mu = self.conv1d_1(l.permute(0, 2, 1))
+            logvar = self.conv1d_2(l.permute(0, 2, 1))
+            sig = torch.exp(0.5 * logvar)
+            randn = self.N.sample(mu.shape)
+            device = torch.device('cuda')
+            randn = randn.to(device)
+            z = mu + sig * randn 
+            self.kl = (sig**2 + mu**2 - torch.log(sig) - 1/2).sum()
+            return z
 
 
-class Decoder(nn.Module):
-    def __init__(self, vae_latent_dim, sp_latent_dims, sp_embed_dim,
-                 sp_mlp_dims, sp_n_heads, sp_n_trnfr_layers, sp_dropouts,
-                 batch_size):
-        """initialize the VAE decoder"""
-        super().__init__()
-        conv1d_ks = int(sp_latent_dims[0] / vae_latent_dim)
-        self.conv1d = nn.ConvTranspose1d(in_channels=1,
-                                         out_channels=sp_embed_dim,
-                                         kernel_size=conv1d_ks,
-                                         stride=conv1d_ks,
-                                         dilation=1)
-        self.stacked_perceiver = StackedPerceiver(
-                                            embed_dim=sp_embed_dim,
-                                            latent_dims=sp_latent_dims[1:],
-                                            mlp_dims=sp_mlp_dims,
-                                            n_heads=sp_n_heads,
-                                            n_trnfr_layers=sp_n_trnfr_layers,
-                                            dropouts=sp_dropouts,
-                                            batch_size=batch_size
-                                            )
-        self.lnorm = nn.LayerNorm(sp_embed_dim)
+    class Decoder(nn.Module):
+        def __init__(self, vae_latent_dim, sp_latent_dims, sp_embed_dim,
+                     sp_mlp_dims, sp_n_heads, sp_n_trnfr_layers, sp_dropouts,
+                     batch_size):
+            """initialize the VAE decoder"""
+            super().__init__()
+            conv1d_ks = int(sp_latent_dims[0] / vae_latent_dim)
+            self.convtrans1d = nn.ConvTranspose1d(in_channels=1,
+                                             out_channels=sp_embed_dim,
+                                             kernel_size=conv1d_ks,
+                                             stride=conv1d_ks,
+                                             dilation=1)
+            self.stacked_perceiver = StackedPerceiver(
+                                                embed_dim=sp_embed_dim,
+                                                latent_dims=sp_latent_dims[1:],
+                                                mlp_dims=sp_mlp_dims,
+                                                n_heads=sp_n_heads,
+                                                n_trnfr_layers=sp_n_trnfr_layers,
+                                                dropouts=sp_dropouts,
+                                                batch_size=batch_size
+                                                )
+            self.lnorm = nn.LayerNorm(sp_embed_dim)
 
-    def forward(self, z):
-        l = self.conv1d(z)
-        l = l.permute(0, 2, 1)
-        x = self.stacked_perceiver(l)
-        x = self.lnorm(x)
-        return x
+        def forward(self, z):
+            l = self.convtrans1d(z)
+            l = l.permute(0, 2, 1)
+            x = self.stacked_perceiver(l)
+            x = self.lnorm(x)
+            return x
 
 
 class PatchDecoder(nn.Module):
@@ -396,7 +397,7 @@ class PatchDecoder(nn.Module):
         self.patch_size = patch_size
         self.input_size = input_size
         self.output_padding = output_padding
-        self.conv2d = nn.ConvTranspose2d(in_channels=embed_dim * data_channels,
+        self.convtrans2d = nn.ConvTranspose2d(in_channels=embed_dim * data_channels,
                                          out_channels=data_channels,
                                          kernel_size=patch_size,
                                          stride=patch_size,
@@ -414,7 +415,7 @@ class PatchDecoder(nn.Module):
                       int(self.input_size[0] / self.patch_size[0]),
                       int(self.input_size[1] / self.patch_size[1])
                       )
-        x = self.conv2d(x)
+        x = self.convtrans2d(x)
         # x = self.lnorm(x)
         return x
 

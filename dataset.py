@@ -58,13 +58,13 @@ class WeatherBenchDataset(Dataset):
         ds = xr.Dataset(new_vars)
 
         if partition == "train":
-            ds = ds.sel(time=slice("1979-01-01", "2019-12-31"))
-            # ds = ds.sel(time=slice("1979-01-01", "1979-12-31"))
-            # ds = ds.sel(time=slice("1979-01-01", "1979-01-31"))
+            # ds = ds.sel(time=slice("1979-01-01", "2019-12-31"))
+            # ds = ds.sel(time=slice("2019-01-01", "2019-12-31"))
+            ds = ds.sel(time=slice("2019-01-01", "2019-01-31"))
         elif partition == "val":
-            ds = ds.sel(time=slice("2020-01-01", "2020-12-31"))
             # ds = ds.sel(time=slice("2020-01-01", "2020-12-31"))
-            # ds = ds.sel(time=slice("2020-01-01", "2020-01-31"))
+            # ds = ds.sel(time=slice("2020-01-01", "2020-12-31"))
+            ds = ds.sel(time=slice("2020-01-01", "2020-01-31"))
         elif partition == "test":
             ds = ds.sel(time=slice("2022-01-01", "2023-12-31"))
 
