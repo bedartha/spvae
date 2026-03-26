@@ -1,5 +1,5 @@
 import os
-import numpy as np
+# import numpy as np
 
 import torch
 from torch.utils.data import DataLoader
@@ -65,6 +65,7 @@ def set_model(local_rank, params):
             )
     torch.cuda.set_device(local_rank)
     torch.cuda.empty_cache()
+    spvae.share_memory()
     spvae = spvae.to('cuda:' + str(local_rank))
     spvae = DDP(spvae, device_ids=[local_rank], find_unused_parameters=True)
 
@@ -84,15 +85,45 @@ def set_optimizer(spvae, params):
     return opt, scaler
 
 
-def train(train_loader, val_loader, model, optim, local_rank, params,
-          scaler, verbose, nname, global_rank, out_dir):
+def train(local_rank, world_size, params, args, nname, out_dir):
+# def train(train_loader, val_loader, model, optim, local_rank, params,
+#           scaler, verbose, nname, global_rank, out_dir):
     """train the model"""
-    train_loss = np.zeros(params.epochs)
-    val_loss = np.zeros(params.epochs)
-    for epoch in range(params.epochs):
+    set_ddp(local_rank, world_size)
+    global_rank = int(os.environ["SLURM_PROCID"])
+
+    train_loader = get_dataloader(path_to_zarr=args.in_file,
+                                to_tensor=True,
+                                partition="train",
+                                batch_size=params.batch_size,
+                                num_workers=params.num_workers,
+                                shuffle=False,
+                                verbose=args.verbose
+                                )
+    val_loader = get_dataloader(path_to_zarr=args.in_file,
+                                to_tensor=True,
+                                partition="val",
+                                batch_size=params.batch_size,
+                                num_workers=params.num_workers,
+                                shuffle=False, verbose=args.verbose
+                                )
+    model = set_model(local_rank, params)
+    optim, scaler = set_optimizer(model, params)
+
+    train_loss = torch.zeros(params.epochs)
+    val_loss = torch.zeros(params.epochs)
+    epochs = torch.arange(params.epochs)
+
+    # set up a text file wher ethe training curves data can be appended
+    if local_rank == 0 and global_rank == 0:
+        FNAME = f"{out_dir}/training_curves.txt"
+        with open(FNAME, "w") as file:
+            file.write("epoch,train_loss, validation_loss\n")
+
+    for epoch in epochs:
         
-        if verbose: 
-            print(f"epoch {epoch} | global rank {global_rank} | " + \
+        if args.verbose: 
+            print(f"epoch {epoch + 1} | global rank {global_rank} | " + \
                     f"local rank {local_rank} | train ...")
       
         model.train()
@@ -107,10 +138,11 @@ def train(train_loader, val_loader, model, optim, local_rank, params,
                 scaler.scale(t_loss).backward()
                 scaler.step(optim)
                 scaler.update()
+        t_loss /= len(train_loader)
         train_loss[epoch] = t_loss
         
-        if verbose: 
-            print(f"epoch {epoch} | global rank {global_rank} | " + \
+        if args.verbose: 
+            print(f"epoch {epoch + 1} | global rank {global_rank} | " + \
                     f"local rank {local_rank} | validate ...")
 
         model.eval()
@@ -122,18 +154,25 @@ def train(train_loader, val_loader, model, optim, local_rank, params,
                     X_ = X_.to('cuda:' + str(local_rank))
                     kl = kl.to('cuda:' + str(local_rank))
                     v_loss = ((X - X_)**2).sum() + kl
+        v_loss /= len(val_loader)
         val_loss[epoch] = v_loss
         
+        # append train and validation losses to text file
+        if local_rank == 0 and global_rank == 0:
+            FNAME = f"{out_dir}/training_curves.txt"
+            with open(FNAME, "a") as file:
+                file.write(f"{epoch.item() + 1},{t_loss.item():.18e},{v_loss.item():.18e}\n")
+
         #save checkpoint
         if local_rank == 0 and global_rank == 0:
-            if epoch % params.save_every == 0:
-                if verbose:
+            if (epoch + 1) % params.save_every == 0:
+                if args.verbose:
                     print(" ")
-                    print(f"save checkpoint at {epoch} epochs ...")
+                    print(f"save checkpoint after {epoch + 1} epochs ...")
                 FNAME = f"{out_dir}/chkpt_epoch{epoch:03d}.tar"
                 torch.save(
                         {
-                            "epoch": epoch,
+                            "epoch": epoch + 1,
                             "model_state_dict":model.state_dict(),
                             "optimizer_state_dict": optim.state_dict(),
                             "train_loss": t_loss,
@@ -142,50 +181,29 @@ def train(train_loader, val_loader, model, optim, local_rank, params,
                         FNAME
                         )
         
-                if verbose:
+                if args.verbose:
                     print(f"saved checkpoint to {FNAME}")
                     print(" ")
 
+    if global_rank == 0 and local_rank == 0:
+        if args.verbose: print("save training curves to file ...")
+        tl_fn = f"{out_dir}/train_loss.dat"
+        train_loss.detach().numpy().dump(tl_fn)
+        if args.verbose: print(f"saved train loss to {tl_fn}")
+        vl_fn = f"{out_dir}/val_loss.dat"
+        val_loss.detach().numpy().dump(vl_fn)
+        if args.verbose: print(f"saved validation loss to {vl_fn}")
+        ep_fn = f"{out_dir}/epochs.dat"
+        epochs += 1 
+        epochs.numpy().dump(ep_fn)
+        if args.verbose: print(f"saved epochs to {ep_fn}")
+
+    dist.destroy_process_group()
+
+    if args.verbose:
+        print(f"done with process {local_rank} of {world_size} " +\
+              f"on node {nname} with global rank {global_rank}")
+
     return train_loss, val_loss
 
-
-def main(rank, world_size, params, args, nname, out_dir):
-    """runs the main code for training and validation"""
-    set_ddp(rank, world_size)
-    global_rank = int(os.environ["SLURM_PROCID"])
-
-    trn_dl = get_dataloader(path_to_zarr=args.in_file,
-                            to_tensor=True,
-                            partition="train",
-                            batch_size=params.batch_size,
-                            num_workers=params.num_workers,
-                            shuffle=False,
-                            verbose=args.verbose
-                            )
-    val_dl = get_dataloader(path_to_zarr=args.in_file,
-                            to_tensor=True,
-                            partition="val",
-                            batch_size=params.batch_size,
-                            num_workers=params.num_workers,
-                            shuffle=False, verbose=args.verbose
-                            )
-    spvae = set_model(rank, params)
-    opt, scaler = set_optimizer(spvae, params)
-    tl, vl = train(trn_dl, val_dl, spvae, opt, rank, params,
-                   scaler, args.verbose, nname, global_rank, out_dir)
-
-    if global_rank == 0 and rank == 0:
-        if verbose: print("save training curves to NPZ file ...")
-        FNAME = f"{out_dir}/training_curves.npz"
-        np.savez(FNAME,
-                 train_loss=tl / len(trn_dl),
-                 val_loss=vl / len(val_dl),
-                 epochs=np.range(1, params.epochs  + 1),
-                 )
-        if verbose: print(f"saved to: {FNAME}")
-    dist.destroy_process_group()
-    if verbose:
-        print(f"done with process {rank} of {world_size}" +\
-              f"on node {nname} with global rank {global_rank}")
-    return None
 

@@ -9,7 +9,7 @@ Train model using multi-node GPU parallelism
 import os
 import argparse
 
-import train
+from train import train
 from params import Params
 
 import torch
@@ -55,9 +55,6 @@ if __name__ == "__main__":
     nprocs = torch.cuda.device_count()
     global_rank = int(os.environ["SLURM_PROCID"])
 
-    print(f"spawning {nprocs} processes on node {nodename} " + \
-            f"with global rank {global_rank}")
-
     jid = os.environ["SLURM_JOB_ID"]
     name = f"{args.name}_jobid_{jid}"
     dirname = f"{args.out_dir}{name}"
@@ -68,7 +65,15 @@ if __name__ == "__main__":
         os.system(f"cp -v {args.config_file} {dirname}")
 
 
-    mp.spawn(train.main,
-             args=(nprocs, params, args, nodename, dirname),
-             nprocs=nprocs
-             )
+    processes = []
+    for rank in range(nprocs):
+        p = mp.Process(target=train,
+                       args=(rank, nprocs, params, args, nodename, dirname)
+                       )
+        # We first train the model across `num_processes` processes
+        p.start()
+        processes.append(p)
+    for p in processes:
+        p.join()
+
+    print("training completed.")
